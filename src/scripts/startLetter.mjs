@@ -1,7 +1,8 @@
 // @ts-check
 
 import { Logger } from '../utils/logger.js';
-import { createWriteStream } from 'node:fs';
+import { writeStream } from '../utils/streamer.js';
+import { popular } from '../utils/popular-words.js';
 
 const dict = /** @type { { [key: string]: { [word: string]: { types: string[] } } } } */ (
   (await import('../../data/dict.json', { with: { type: 'json' } })).default
@@ -9,47 +10,45 @@ const dict = /** @type { { [key: string]: { [word: string]: { types: string[] } 
 
 const logger = new Logger();
 
+let popularDone = false;
+let normalDone = false;
+
 (() => {
   try {
     /** @type { { [key: string]: string[] } } */
     const startLetterMap = {};
+    /** @type { { [key: string]: string[] } } */
+    const popularStartLetterMap = {};
 
     for (const section of Object.values(dict)) {
       for (const word of Object.keys(section)) {
         const firstLetter = word[0].replace('"', '\\"').toLowerCase();
         (startLetterMap[firstLetter] ??= []).push(word);
+        if (popular.has(word)) {
+          (popularStartLetterMap[firstLetter] ??= []).push(word);
+        }
       }
     }
 
-    const stream = createWriteStream('./indexes/data/startLetters.json', { flags: 'w', encoding: 'utf-8' });
+    const stream = writeStream(startLetterMap, 'start-letters.json', logger);
+    const popularStream = writeStream(popularStartLetterMap, 'popular-start-letters.json', logger);
 
-    stream.on('error', (e) => {
-      logger.error(e);
-      process.exit(1);
+    popularStream.on('finish', () => {
+      logger.info('Popular Done.');
+      popularDone = true;
+      if (normalDone) {
+        logger.info('All Done.');
+        process.exit(0);
+      }
     });
 
-    stream.write('{\n');
-    let counter = 0;
-    const startLetterMapLength = Object.keys(startLetterMap).length;
-
-    for (const entry in startLetterMap) {
-      if (!Object.hasOwn(startLetterMap, entry)) continue;
-
-      const element = startLetterMap[entry];
-
-      counter++;
-
-      if (counter === startLetterMapLength) {
-        stream.write(`"${entry}":${JSON.stringify(element)}\n`);
-      } else {
-        stream.write(`"${entry}":${JSON.stringify(element)},\n`);
-      }
-    }
-    stream.write('}');
-    stream.end();
-
     stream.on('finish', () => {
-      logger.info('Done.');
+      logger.info('Normal Done.');
+      normalDone = true;
+      if (popularDone) {
+        logger.info('All Done.');
+        process.exit(0);
+      }
       process.exit(0);
     });
   } catch (e) {
